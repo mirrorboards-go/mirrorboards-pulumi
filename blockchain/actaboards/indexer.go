@@ -29,6 +29,11 @@ type IndexerArgs struct {
 	PostgresSecretName     pulumi.StringInput
 	PostgresSecretKey      pulumi.StringInput
 	PostgresStartBlock     pulumi.IntInput
+	// Elasticsearch options
+	ElasticsearchURL         pulumi.StringInput
+	ElasticsearchSecretName  pulumi.StringInput
+	ElasticsearchIndexPrefix pulumi.StringInput
+	ElasticsearchStartBlock  pulumi.IntInput
 }
 
 func NewIndexer(ctx *pulumi.Context, name string, args *IndexerArgs, opts ...pulumi.ResourceOption) (*Indexer, error) {
@@ -155,7 +160,7 @@ func NewIndexer(ctx *pulumi.Context, name string, args *IndexerArgs, opts ...pul
 							Command: pulumi.StringArray{
 								pulumi.String("/bin/sh"),
 								pulumi.String("-c"),
-								pulumi.String("exec /usr/local/bin/witness_node \"$@\" --postgres-content-url=\"$POSTGRES_CONTENT_URL\""),
+								pulumi.String("exec /usr/local/bin/witness_node \"$@\" ${POSTGRES_CONTENT_URL:+--postgres-content-url=\"$POSTGRES_CONTENT_URL\"} ${ELASTICSEARCH_URL:+--elasticsearch-node-url=\"$ELASTICSEARCH_URL\"} ${ELASTICSEARCH_PASSWORD:+--elasticsearch-basic-auth=\"elastic:$ELASTICSEARCH_PASSWORD\"} ${ES_OBJECTS_URL:+--es-objects-elasticsearch-url=\"$ES_OBJECTS_URL\"} ${ELASTICSEARCH_PASSWORD:+--es-objects-auth=\"elastic:$ELASTICSEARCH_PASSWORD\"}"),
 								pulumi.String("--"),
 							},
 							Args: func() pulumi.StringArray {
@@ -199,6 +204,34 @@ func NewIndexer(ctx *pulumi.Context, name string, args *IndexerArgs, opts ...pul
 									baseArgs = append(baseArgs, startBlockArg)
 								}
 
+								if args.ElasticsearchIndexPrefix != nil {
+									indexPrefixArg := args.ElasticsearchIndexPrefix.ToStringOutput().ApplyT(func(prefix string) string {
+										return fmt.Sprintf("--elasticsearch-index-prefix=%s", prefix)
+									}).(pulumi.StringOutput)
+
+									baseArgs = append(baseArgs, indexPrefixArg)
+
+									esObjectsIndexPrefixArg := args.ElasticsearchIndexPrefix.ToStringOutput().ApplyT(func(prefix string) string {
+										return fmt.Sprintf("--es-objects-index-prefix=%s", prefix)
+									}).(pulumi.StringOutput)
+
+									baseArgs = append(baseArgs, esObjectsIndexPrefixArg)
+								}
+
+								if args.ElasticsearchStartBlock != nil {
+									esStartBlockArg := args.ElasticsearchStartBlock.ToIntOutput().ApplyT(func(block int) string {
+										return fmt.Sprintf("--elasticsearch-start-es-after-block=%d", block)
+									}).(pulumi.StringOutput)
+
+									baseArgs = append(baseArgs, esStartBlockArg)
+
+									esObjectsStartBlockArg := args.ElasticsearchStartBlock.ToIntOutput().ApplyT(func(block int) string {
+										return fmt.Sprintf("--es-objects-start-es-after-block=%d", block)
+									}).(pulumi.StringOutput)
+
+									baseArgs = append(baseArgs, esObjectsStartBlockArg)
+								}
+
 								return baseArgs
 							}(),
 							Env: func() corev1.EnvVarArray {
@@ -211,6 +244,29 @@ func NewIndexer(ctx *pulumi.Context, name string, args *IndexerArgs, opts ...pul
 											SecretKeyRef: &corev1.SecretKeySelectorArgs{
 												Name: args.PostgresSecretName.ToStringOutput(),
 												Key:  args.PostgresSecretKey.ToStringOutput(),
+											},
+										},
+									})
+								}
+
+								if args.ElasticsearchURL != nil {
+									envVars = append(envVars, &corev1.EnvVarArgs{
+										Name:  pulumi.String("ELASTICSEARCH_URL"),
+										Value: args.ElasticsearchURL,
+									})
+									envVars = append(envVars, &corev1.EnvVarArgs{
+										Name:  pulumi.String("ES_OBJECTS_URL"),
+										Value: args.ElasticsearchURL,
+									})
+								}
+
+								if args.ElasticsearchSecretName != nil {
+									envVars = append(envVars, &corev1.EnvVarArgs{
+										Name: pulumi.String("ELASTICSEARCH_PASSWORD"),
+										ValueFrom: &corev1.EnvVarSourceArgs{
+											SecretKeyRef: &corev1.SecretKeySelectorArgs{
+												Name: args.ElasticsearchSecretName.ToStringOutput(),
+												Key:  pulumi.String("elastic"),
 											},
 										},
 									})
