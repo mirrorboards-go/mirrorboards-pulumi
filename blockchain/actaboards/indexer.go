@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/mirrorboards-go/mirrorboards-pulumi/namespace"
-	"github.com/pulumi/pulumi-kubernetes/sdk/v4/go/kubernetes/apiextensions"
 
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 
@@ -14,35 +13,36 @@ import (
 	metav1 "github.com/pulumi/pulumi-kubernetes/sdk/v4/go/kubernetes/meta/v1"
 )
 
-type SeedNode struct {
+type Indexer struct {
 	pulumi.ResourceState
 
-	Service *corev1.Service
+	Deployment *appsv1.Deployment
 }
 
-type SeedNodeArgs struct {
-	Name           pulumi.StringInput
-	Namespace      pulumi.StringInput
-	Hostname       pulumi.StringInput
-	GenesisURL     pulumi.StringInput
-	SeedNodes      pulumi.StringArrayInput
-	CertIssuerName pulumi.StringInput
-	Image          pulumi.StringInput
-	Plugins        pulumi.StringArrayInput
+type IndexerArgs struct {
+	Name                   pulumi.StringInput
+	Namespace              pulumi.StringInput
+	GenesisURL             pulumi.StringInput
+	SeedNodes              pulumi.StringArrayInput
+	Image                  pulumi.StringInput
+	Plugins                pulumi.StringArrayInput
+	PostgresSecretName     pulumi.StringInput
+	PostgresSecretKey      pulumi.StringInput
+	PostgresStartBlock     pulumi.IntInput
 }
 
-func NewSeedNode(ctx *pulumi.Context, name string, args *SeedNodeArgs, opts ...pulumi.ResourceOption) (*SeedNode, error) {
-	component := &SeedNode{}
+func NewIndexer(ctx *pulumi.Context, name string, args *IndexerArgs, opts ...pulumi.ResourceOption) (*Indexer, error) {
+	component := &Indexer{}
 
 	ns := namespace.NewNamespace(name)
 
-	err := ctx.RegisterComponentResource("actaboards:network:SeedNode", name, component, opts...)
+	err := ctx.RegisterComponentResource("actaboards:network:Indexer", name, component, opts...)
 	if err != nil {
 		return nil, err
 	}
 
 	if args == nil {
-		args = &SeedNodeArgs{}
+		args = &IndexerArgs{}
 	}
 
 	if args.Image == nil {
@@ -51,35 +51,6 @@ func NewSeedNode(ctx *pulumi.Context, name string, args *SeedNodeArgs, opts ...p
 
 	Labels := pulumi.StringMap{
 		"app": pulumi.String(ns.Get()),
-	}
-
-	CertSecretName := ns.Get("tls")
-
-	Cert, err := apiextensions.NewCustomResource(ctx, ns.Get("certificate"), &apiextensions.CustomResourceArgs{
-		ApiVersion: pulumi.String("cert-manager.io/v1"),
-		Kind:       pulumi.String("Certificate"),
-		Metadata: &metav1.ObjectMetaArgs{
-			Name:      args.Name,
-			Namespace: args.Namespace,
-			Annotations: pulumi.StringMap{
-				"pulumi.com/waitFor": pulumi.String("condition=Ready"),
-			},
-		},
-		OtherFields: map[string]interface{}{
-			"spec": map[string]interface{}{
-				"secretName": CertSecretName,
-				"issuerRef": map[string]interface{}{
-					"name": args.CertIssuerName,
-					"kind": "ClusterIssuer",
-				},
-				"dnsNames": []interface{}{
-					args.Hostname,
-				},
-			},
-		},
-	}, pulumi.Parent(component))
-	if err != nil {
-		return nil, err
 	}
 
 	NodePVC, err := corev1.NewPersistentVolumeClaim(ctx, ns.Get("pvc"), &corev1.PersistentVolumeClaimArgs{
@@ -93,7 +64,7 @@ func NewSeedNode(ctx *pulumi.Context, name string, args *SeedNodeArgs, opts ...p
 			},
 			Resources: &corev1.VolumeResourceRequirementsArgs{
 				Requests: pulumi.StringMap{
-					"storage": pulumi.String("5Gi"),
+					"storage": pulumi.String("10Gi"),
 				},
 			},
 		},
@@ -122,44 +93,7 @@ func NewSeedNode(ctx *pulumi.Context, name string, args *SeedNodeArgs, opts ...p
 		return nil, err
 	}
 
-	Service, err := corev1.NewService(ctx, ns.Get("svc"), &corev1.ServiceArgs{
-		Metadata: &metav1.ObjectMetaArgs{
-			Name:      args.Name,
-			Namespace: args.Namespace,
-			Labels:    Labels,
-			Annotations: pulumi.StringMap{
-				"external-dns.alpha.kubernetes.io/hostname": args.Hostname,
-				"external-dns.alpha.kubernetes.io/ttl":      pulumi.String("1800"),
-			},
-		},
-		Spec: &corev1.ServiceSpecArgs{
-			Type: pulumi.String("LoadBalancer"),
-			Ports: &corev1.ServicePortArray{
-				&corev1.ServicePortArgs{
-					Port:        pulumi.Int(8090),
-					TargetPort:  pulumi.Int(8090),
-					Name:        pulumi.String("rpc"),
-					Protocol:    pulumi.String("TCP"),
-					AppProtocol: pulumi.String("kubernetes.io/wss"),
-				},
-				&corev1.ServicePortArgs{
-					Port:        pulumi.Int(2771),
-					TargetPort:  pulumi.Int(2771),
-					Name:        pulumi.String("p2p"),
-					Protocol:    pulumi.String("TCP"),
-					AppProtocol: pulumi.String("kubernetes.io/wss"),
-				},
-			},
-			Selector: Labels,
-		},
-	}, pulumi.Parent(component))
-	if err != nil {
-		return nil, err
-	}
-
-	component.Service = Service
-
-	_, err = appsv1.NewDeployment(ctx, ns.Get("deployment"), &appsv1.DeploymentArgs{
+	Deployment, err := appsv1.NewDeployment(ctx, ns.Get("deployment"), &appsv1.DeploymentArgs{
 		Metadata: &metav1.ObjectMetaArgs{
 			Name:      pulumi.String(ns.Get("deployment")),
 			Namespace: args.Namespace,
@@ -179,31 +113,6 @@ func NewSeedNode(ctx *pulumi.Context, name string, args *SeedNodeArgs, opts ...p
 					},
 					InitContainers: func() corev1.ContainerArray {
 						containers := corev1.ContainerArray{}
-
-						containers = append(containers, &corev1.ContainerArgs{
-							Name:  pulumi.String("tls-combiner"),
-							Image: pulumi.String("busybox:latest"),
-							Command: pulumi.StringArray{
-								pulumi.String("sh"),
-								pulumi.String("-c"),
-								pulumi.String("cat /tls-certs/tls.crt /tls-certs/tls.key > /tls/combined.pem"),
-							},
-							SecurityContext: &corev1.SecurityContextArgs{
-								RunAsUser:  pulumi.Int(1000),
-								RunAsGroup: pulumi.Int(1000),
-							},
-							VolumeMounts: corev1.VolumeMountArray{
-								&corev1.VolumeMountArgs{
-									Name:      pulumi.String("tls-volume"),
-									MountPath: pulumi.String("/tls-certs"),
-									ReadOnly:  pulumi.Bool(true),
-								},
-								&corev1.VolumeMountArgs{
-									Name:      pulumi.String("tls-writable-volume"),
-									MountPath: pulumi.String("/tls"),
-								},
-							},
-						})
 
 						if args.GenesisURL != nil {
 							containers = append(containers, &corev1.ContainerArgs{
@@ -230,15 +139,6 @@ func NewSeedNode(ctx *pulumi.Context, name string, args *SeedNodeArgs, opts ...p
 										MountPath: pulumi.String("/genesis"),
 									},
 									&corev1.VolumeMountArgs{
-										Name:      pulumi.String("tls-volume"),
-										MountPath: pulumi.String("/tls-certs"),
-										ReadOnly:  pulumi.Bool(true),
-									},
-									&corev1.VolumeMountArgs{
-										Name:      pulumi.String("tls-writable-volume"),
-										MountPath: pulumi.String("/tls"),
-									},
-									&corev1.VolumeMountArgs{
 										Name:      pulumi.String("data-volume"),
 										MountPath: pulumi.String("/data"),
 									},
@@ -250,17 +150,18 @@ func NewSeedNode(ctx *pulumi.Context, name string, args *SeedNodeArgs, opts ...p
 					}(),
 					Containers: corev1.ContainerArray{
 						&corev1.ContainerArgs{
-							Name:  pulumi.String(ns.Get("rpc")),
+							Name:  pulumi.String(ns.Get("indexer")),
 							Image: args.Image,
 							Command: pulumi.StringArray{
-								pulumi.String("/usr/local/bin/witness_node"),
+								pulumi.String("/bin/sh"),
+								pulumi.String("-c"),
+								pulumi.String("exec /usr/local/bin/witness_node \"$@\" --postgres-content-url=\"$POSTGRES_CONTENT_URL\""),
+								pulumi.String("--"),
 							},
 							Args: func() pulumi.StringArray {
 								baseArgs := pulumi.StringArray{
 									pulumi.String("--data-dir=/data"),
 									pulumi.String("--p2p-endpoint=0.0.0.0:2771"),
-									pulumi.String("--rpc-tls-endpoint=0.0.0.0:8090"),
-									pulumi.String("--server-pem=/tls/combined.pem"),
 								}
 
 								if args.GenesisURL != nil {
@@ -268,15 +169,15 @@ func NewSeedNode(ctx *pulumi.Context, name string, args *SeedNodeArgs, opts ...p
 								}
 
 								if args.SeedNodes != nil {
-									seedNodeTLSsArg := args.SeedNodes.ToStringArrayOutput().ApplyT(func(nodes []string) string {
+									seedNodesArg := args.SeedNodes.ToStringArrayOutput().ApplyT(func(nodes []string) string {
 										nodeList := "[]"
 										if len(nodes) > 0 {
-											nodeList = fmt.Sprintf(`["%s"]`, strings.Join(nodes, `", "`))
+											nodeList = fmt.Sprintf(`["%s"]`, strings.Join(nodes, `" "`))
 										}
 										return fmt.Sprintf("--seed-nodes=%s", nodeList)
 									}).(pulumi.StringOutput)
 
-									baseArgs = append(baseArgs, seedNodeTLSsArg)
+									baseArgs = append(baseArgs, seedNodesArg)
 								}
 
 								if args.Plugins != nil {
@@ -290,13 +191,34 @@ func NewSeedNode(ctx *pulumi.Context, name string, args *SeedNodeArgs, opts ...p
 									baseArgs = append(baseArgs, pluginsArg)
 								}
 
+								if args.PostgresStartBlock != nil {
+									startBlockArg := args.PostgresStartBlock.ToIntOutput().ApplyT(func(block int) string {
+										return fmt.Sprintf("--postgres-content-start-block=%d", block)
+									}).(pulumi.StringOutput)
+
+									baseArgs = append(baseArgs, startBlockArg)
+								}
+
 								return baseArgs
 							}(),
+							Env: func() corev1.EnvVarArray {
+								envVars := corev1.EnvVarArray{}
+
+								if args.PostgresSecretName != nil && args.PostgresSecretKey != nil {
+									envVars = append(envVars, &corev1.EnvVarArgs{
+										Name: pulumi.String("POSTGRES_CONTENT_URL"),
+										ValueFrom: &corev1.EnvVarSourceArgs{
+											SecretKeyRef: &corev1.SecretKeySelectorArgs{
+												Name: args.PostgresSecretName.ToStringOutput(),
+												Key:  args.PostgresSecretKey.ToStringOutput(),
+											},
+										},
+									})
+								}
+
+								return envVars
+							}(),
 							Ports: corev1.ContainerPortArray{
-								&corev1.ContainerPortArgs{
-									Name:          pulumi.String("rpc"),
-									ContainerPort: pulumi.Int(8090),
-								},
 								&corev1.ContainerPortArgs{
 									Name:          pulumi.String("p2p"),
 									ContainerPort: pulumi.Int(2771),
@@ -307,10 +229,6 @@ func NewSeedNode(ctx *pulumi.Context, name string, args *SeedNodeArgs, opts ...p
 									&corev1.VolumeMountArgs{
 										Name:      pulumi.String("data-volume"),
 										MountPath: pulumi.String("/data"),
-									},
-									&corev1.VolumeMountArgs{
-										Name:      pulumi.String("tls-writable-volume"),
-										MountPath: pulumi.String("/tls"),
 									},
 								}
 
@@ -334,16 +252,6 @@ func NewSeedNode(ctx *pulumi.Context, name string, args *SeedNodeArgs, opts ...p
 									ClaimName: NodePVC.Metadata.Name().Elem(),
 								},
 							},
-							&corev1.VolumeArgs{
-								Name: pulumi.String("tls-volume"),
-								Secret: &corev1.SecretVolumeSourceArgs{
-									SecretName: pulumi.String(CertSecretName),
-								},
-							},
-							&corev1.VolumeArgs{
-								Name:     pulumi.String("tls-writable-volume"),
-								EmptyDir: &corev1.EmptyDirVolumeSourceArgs{},
-							},
 						}
 
 						if args.GenesisURL != nil {
@@ -362,11 +270,13 @@ func NewSeedNode(ctx *pulumi.Context, name string, args *SeedNodeArgs, opts ...p
 		},
 	},
 		pulumi.Parent(component),
-		pulumi.DependsOn([]pulumi.Resource{NodePVC, GenesisPVC, Cert}),
+		pulumi.DependsOn([]pulumi.Resource{NodePVC, GenesisPVC}),
 	)
 	if err != nil {
 		return nil, err
 	}
+
+	component.Deployment = Deployment
 
 	return component, nil
 }
