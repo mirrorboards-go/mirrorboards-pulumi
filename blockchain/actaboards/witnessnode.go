@@ -177,8 +177,9 @@ func NewWitnessNode(ctx *pulumi.Context, name string, args *WitnessNodeArgs, opt
 					}(),
 					Containers: corev1.ContainerArray{
 						&corev1.ContainerArgs{
-							Name:  pulumi.String(ns.Get("rpc")),
-							Image: args.Image,
+							Name:            pulumi.String(ns.Get("rpc")),
+							Image:           args.Image,
+							ImagePullPolicy: pulumi.String("Always"),
 							Command: pulumi.StringArray{
 								pulumi.String("/usr/local/bin/witness_node"),
 							},
