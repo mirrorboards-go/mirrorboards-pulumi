@@ -46,7 +46,7 @@ func NewDigitalOceanClusterLookup(ctx *pulumi.Context, name string, args *Digita
 
 	k8sProvider, err := kubernetes.NewProvider(ctx, name+"-k8s-provider", &kubernetes.ProviderArgs{
 		Kubeconfig: kubeconfig,
-	}, pulumi.Parent(component), pulumi.IgnoreChanges([]string{"kubeconfig"}))
+	}, pulumi.Parent(component))
 	if err != nil {
 		return nil, err
 	}
