@@ -34,6 +34,13 @@ type IndexerArgs struct {
 	ElasticsearchSecretName  pulumi.StringInput
 	ElasticsearchIndexPrefix pulumi.StringInput
 	ElasticsearchStartBlock  pulumi.IntInput
+	// Postgres indexer options (unified plugin replacing elasticsearch + es_objects + postgres_content)
+	PostgresIndexerSecretName     pulumi.StringInput
+	PostgresIndexerSecretKey      pulumi.StringInput
+	PostgresIndexerMode           pulumi.IntInput
+	PostgresIndexerStartBlock     pulumi.IntInput
+	PostgresIndexerVisitor        pulumi.BoolInput
+	PostgresIndexerOperationString pulumi.BoolInput
 }
 
 func NewIndexer(ctx *pulumi.Context, name string, args *IndexerArgs, opts ...pulumi.ResourceOption) (*Indexer, error) {
@@ -160,7 +167,7 @@ func NewIndexer(ctx *pulumi.Context, name string, args *IndexerArgs, opts ...pul
 							Command: pulumi.StringArray{
 								pulumi.String("/bin/sh"),
 								pulumi.String("-c"),
-								pulumi.String("exec /usr/local/bin/witness_node \"$@\" ${POSTGRES_CONTENT_URL:+--postgres-content-url=\"$POSTGRES_CONTENT_URL\"} ${ELASTICSEARCH_URL:+--elasticsearch-node-url=\"$ELASTICSEARCH_URL\"} ${ELASTICSEARCH_PASSWORD:+--elasticsearch-basic-auth=\"elastic:$ELASTICSEARCH_PASSWORD\"} ${ES_OBJECTS_URL:+--es-objects-elasticsearch-url=\"$ES_OBJECTS_URL\"} ${ELASTICSEARCH_PASSWORD:+--es-objects-auth=\"elastic:$ELASTICSEARCH_PASSWORD\"}"),
+								pulumi.String("exec /usr/local/bin/witness_node \"$@\" ${POSTGRES_CONTENT_URL:+--postgres-content-url=\"$POSTGRES_CONTENT_URL\"} ${ELASTICSEARCH_URL:+--elasticsearch-node-url=\"$ELASTICSEARCH_URL\"} ${ELASTICSEARCH_PASSWORD:+--elasticsearch-basic-auth=\"elastic:$ELASTICSEARCH_PASSWORD\"} ${ES_OBJECTS_URL:+--es-objects-elasticsearch-url=\"$ES_OBJECTS_URL\"} ${ELASTICSEARCH_PASSWORD:+--es-objects-auth=\"elastic:$ELASTICSEARCH_PASSWORD\"} ${POSTGRES_INDEXER_URL:+--postgres-indexer-url=\"$POSTGRES_INDEXER_URL\"}"),
 								pulumi.String("--"),
 							},
 							Args: func() pulumi.StringArray {
@@ -232,6 +239,34 @@ func NewIndexer(ctx *pulumi.Context, name string, args *IndexerArgs, opts ...pul
 									baseArgs = append(baseArgs, esObjectsStartBlockArg)
 								}
 
+								if args.PostgresIndexerMode != nil {
+									modeArg := args.PostgresIndexerMode.ToIntOutput().ApplyT(func(mode int) string {
+										return fmt.Sprintf("--postgres-indexer-mode=%d", mode)
+									}).(pulumi.StringOutput)
+									baseArgs = append(baseArgs, modeArg)
+								}
+
+								if args.PostgresIndexerStartBlock != nil {
+									startBlockArg := args.PostgresIndexerStartBlock.ToIntOutput().ApplyT(func(block int) string {
+										return fmt.Sprintf("--postgres-indexer-start-after-block=%d", block)
+									}).(pulumi.StringOutput)
+									baseArgs = append(baseArgs, startBlockArg)
+								}
+
+								if args.PostgresIndexerVisitor != nil {
+									visitorArg := args.PostgresIndexerVisitor.ToBoolOutput().ApplyT(func(v bool) string {
+										return fmt.Sprintf("--postgres-indexer-visitor=%t", v)
+									}).(pulumi.StringOutput)
+									baseArgs = append(baseArgs, visitorArg)
+								}
+
+								if args.PostgresIndexerOperationString != nil {
+									opStringArg := args.PostgresIndexerOperationString.ToBoolOutput().ApplyT(func(v bool) string {
+										return fmt.Sprintf("--postgres-indexer-operation-string=%t", v)
+									}).(pulumi.StringOutput)
+									baseArgs = append(baseArgs, opStringArg)
+								}
+
 								return baseArgs
 							}(),
 							Env: func() corev1.EnvVarArray {
@@ -267,6 +302,18 @@ func NewIndexer(ctx *pulumi.Context, name string, args *IndexerArgs, opts ...pul
 											SecretKeyRef: &corev1.SecretKeySelectorArgs{
 												Name: args.ElasticsearchSecretName.ToStringOutput(),
 												Key:  pulumi.String("elastic"),
+											},
+										},
+									})
+								}
+
+								if args.PostgresIndexerSecretName != nil && args.PostgresIndexerSecretKey != nil {
+									envVars = append(envVars, &corev1.EnvVarArgs{
+										Name: pulumi.String("POSTGRES_INDEXER_URL"),
+										ValueFrom: &corev1.EnvVarSourceArgs{
+											SecretKeyRef: &corev1.SecretKeySelectorArgs{
+												Name: args.PostgresIndexerSecretName.ToStringOutput(),
+												Key:  args.PostgresIndexerSecretKey.ToStringOutput(),
 											},
 										},
 									})
