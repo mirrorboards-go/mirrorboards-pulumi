@@ -20,26 +20,26 @@ type Indexer struct {
 }
 
 type IndexerArgs struct {
-	Name                   pulumi.StringInput
-	Namespace              pulumi.StringInput
-	GenesisURL             pulumi.StringInput
-	SeedNodes              pulumi.StringArrayInput
-	Image                  pulumi.StringInput
-	Plugins                pulumi.StringArrayInput
-	PostgresSecretName     pulumi.StringInput
-	PostgresSecretKey      pulumi.StringInput
-	PostgresStartBlock     pulumi.IntInput
+	Name               pulumi.StringInput
+	Namespace          pulumi.StringInput
+	GenesisURL         pulumi.StringInput
+	SeedNodes          pulumi.StringArrayInput
+	Image              pulumi.StringInput
+	Plugins            pulumi.StringArrayInput
+	PostgresSecretName pulumi.StringInput
+	PostgresSecretKey  pulumi.StringInput
+	PostgresStartBlock pulumi.IntInput
 	// Elasticsearch options
 	ElasticsearchURL         pulumi.StringInput
 	ElasticsearchSecretName  pulumi.StringInput
 	ElasticsearchIndexPrefix pulumi.StringInput
 	ElasticsearchStartBlock  pulumi.IntInput
 	// Postgres indexer options (unified plugin replacing elasticsearch + es_objects + postgres_content)
-	PostgresIndexerSecretName     pulumi.StringInput
-	PostgresIndexerSecretKey      pulumi.StringInput
-	PostgresIndexerMode           pulumi.IntInput
-	PostgresIndexerStartBlock     pulumi.IntInput
-	PostgresIndexerVisitor        pulumi.BoolInput
+	PostgresIndexerSecretName      pulumi.StringInput
+	PostgresIndexerSecretKey       pulumi.StringInput
+	PostgresIndexerMode            pulumi.IntInput
+	PostgresIndexerStartBlock      pulumi.IntInput
+	PostgresIndexerVisitor         pulumi.BoolInput
 	PostgresIndexerOperationString pulumi.BoolInput
 }
 
@@ -162,8 +162,9 @@ func NewIndexer(ctx *pulumi.Context, name string, args *IndexerArgs, opts ...pul
 					}(),
 					Containers: corev1.ContainerArray{
 						&corev1.ContainerArgs{
-							Name:  pulumi.String(ns.Get("indexer")),
-							Image: args.Image,
+							Name:            pulumi.String(ns.Get("indexer")),
+							Image:           args.Image,
+							ImagePullPolicy: pulumi.String("Always"),
 							Command: pulumi.StringArray{
 								pulumi.String("/bin/sh"),
 								pulumi.String("-c"),
