@@ -185,7 +185,7 @@ func NewIndexer(ctx *pulumi.Context, name string, args *IndexerArgs, opts ...pul
 									seedNodesArg := args.SeedNodes.ToStringArrayOutput().ApplyT(func(nodes []string) string {
 										nodeList := "[]"
 										if len(nodes) > 0 {
-											nodeList = fmt.Sprintf(`["%s"]`, strings.Join(nodes, `" "`))
+											nodeList = fmt.Sprintf(`["%s"]`, strings.Join(nodes, `", "`))
 										}
 										return fmt.Sprintf("--seed-nodes=%s", nodeList)
 									}).(pulumi.StringOutput)
