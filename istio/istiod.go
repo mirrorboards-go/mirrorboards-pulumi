@@ -15,7 +15,8 @@ type Istiod struct {
 type IstiodArgs struct {
 	// Version of Istiod chart (default: 1.28.2)
 	Version string
-	// Profile to use (default: ambient)
+	// Optional profile to use (for example: ambient, demo, preview, stable, remote).
+	// Leave empty to use the chart defaults.
 	Profile string
 }
 
@@ -30,7 +31,7 @@ func NewIstiod(ctx *pulumi.Context, name string, args *IstiodArgs, opts ...pulum
 	}
 
 	version := DefaultVersion
-	profile := "ambient"
+	profile := ""
 	if args != nil {
 		if args.Version != "" {
 			version = args.Version
@@ -40,7 +41,7 @@ func NewIstiod(ctx *pulumi.Context, name string, args *IstiodArgs, opts ...pulum
 		}
 	}
 
-	release, err := helm.NewRelease(ctx, ns.Get(), &helm.ReleaseArgs{
+	releaseArgs := &helm.ReleaseArgs{
 		RepositoryOpts: helm.RepositoryOptsArgs{
 			Repo: pulumi.String(IstioHelmRepo),
 		},
@@ -49,10 +50,15 @@ func NewIstiod(ctx *pulumi.Context, name string, args *IstiodArgs, opts ...pulum
 		Chart:           pulumi.String("istiod"),
 		CreateNamespace: pulumi.BoolPtr(true),
 		Version:         pulumi.String(version),
-		Values: pulumi.Map{
+	}
+
+	if profile != "" {
+		releaseArgs.Values = pulumi.Map{
 			"profile": pulumi.String(profile),
-		},
-	}, pulumi.Parent(component))
+		}
+	}
+
+	release, err := helm.NewRelease(ctx, ns.Get(), releaseArgs, pulumi.Parent(component))
 	if err != nil {
 		return nil, err
 	}
