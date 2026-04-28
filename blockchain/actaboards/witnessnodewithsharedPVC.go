@@ -18,12 +18,13 @@ type WitnessNodeWithSharedPVC struct {
 }
 
 type WitnessNodeWithSharedPVCArgs struct {
-	Name           pulumi.StringInput
-	Namespace      pulumi.StringInput
-	GenesisPVCName pulumi.StringInput
-	SeedNodes      pulumi.StringArrayInput
-	Witness        *WitnessArgs
-	Image          pulumi.StringInput
+	Name             pulumi.StringInput
+	Namespace        pulumi.StringInput
+	GenesisPVCName   pulumi.StringInput
+	GenesisPublicURL pulumi.StringInput
+	SeedNodes        pulumi.StringArrayInput
+	Witness          *WitnessArgs
+	Image            pulumi.StringInput
 }
 
 func NewWitnessNodeWithSharedPVC(ctx *pulumi.Context, name string, args *WitnessNodeWithSharedPVCArgs, opts ...pulumi.ResourceOption) (*WitnessNodeWithSharedPVC, error) {
@@ -42,6 +43,10 @@ func NewWitnessNodeWithSharedPVC(ctx *pulumi.Context, name string, args *Witness
 
 	if args.Image == nil {
 		args.Image = pulumi.String("ghcr.io/actaboards/actaboards-core:latest")
+	}
+
+	if args.GenesisPVCName != nil && args.GenesisPublicURL != nil {
+		return nil, fmt.Errorf("witness node %s cannot use both GenesisPVCName and GenesisPublicURL", name)
 	}
 
 	Labels := pulumi.StringMap{
@@ -110,6 +115,33 @@ func NewWitnessNodeWithSharedPVC(ctx *pulumi.Context, name string, args *Witness
 					SecurityContext: &corev1.PodSecurityContextArgs{
 						FsGroup: pulumi.Int(1000),
 					},
+					InitContainers: func() corev1.ContainerArray {
+						if args.GenesisPublicURL == nil {
+							return nil
+						}
+
+						return corev1.ContainerArray{
+							&corev1.ContainerArgs{
+								Name:  pulumi.String("genesis-bootstrap"),
+								Image: pulumi.String("curlimages/curl:latest"),
+								Command: pulumi.StringArray{
+									pulumi.String("sh"),
+									pulumi.String("-ec"),
+									pulumi.Sprintf("curl --fail --silent --show-error --location %q -o /genesis/genesis.json && test -s /genesis/genesis.json", args.GenesisPublicURL),
+								},
+								SecurityContext: &corev1.SecurityContextArgs{
+									RunAsUser:  pulumi.Int(1000),
+									RunAsGroup: pulumi.Int(1000),
+								},
+								VolumeMounts: corev1.VolumeMountArray{
+									&corev1.VolumeMountArgs{
+										Name:      pulumi.String("genesis-volume"),
+										MountPath: pulumi.String("/genesis"),
+									},
+								},
+							},
+						}
+					}(),
 					Containers: corev1.ContainerArray{
 						&corev1.ContainerArgs{
 							Name:            pulumi.String(ns.Get("rpc")),
@@ -136,7 +168,7 @@ func NewWitnessNodeWithSharedPVC(ctx *pulumi.Context, name string, args *Witness
 									baseArgs = append(baseArgs, pulumi.String("--enable-stale-production"))
 								}
 
-								if args.GenesisPVCName != nil {
+								if args.GenesisPVCName != nil || args.GenesisPublicURL != nil {
 									baseArgs = append(baseArgs, pulumi.String("--genesis-json=/genesis/genesis.json"))
 								}
 
@@ -167,7 +199,7 @@ func NewWitnessNodeWithSharedPVC(ctx *pulumi.Context, name string, args *Witness
 									},
 								}
 
-								if args.GenesisPVCName != nil {
+								if args.GenesisPVCName != nil || args.GenesisPublicURL != nil {
 									volumeMounts = append(volumeMounts, &corev1.VolumeMountArgs{
 										Name:      pulumi.String("genesis-volume"),
 										MountPath: pulumi.String("/genesis"),
@@ -195,6 +227,11 @@ func NewWitnessNodeWithSharedPVC(ctx *pulumi.Context, name string, args *Witness
 								PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSourceArgs{
 									ClaimName: args.GenesisPVCName,
 								},
+							})
+						} else if args.GenesisPublicURL != nil {
+							volumes = append(volumes, &corev1.VolumeArgs{
+								Name:     pulumi.String("genesis-volume"),
+								EmptyDir: &corev1.EmptyDirVolumeSourceArgs{},
 							})
 						}
 

@@ -21,14 +21,15 @@ type SeedNodeWithSharedPVC struct {
 }
 
 type SeedNodeWithSharedPVCArgs struct {
-	Name           pulumi.StringInput
-	Namespace      pulumi.StringInput
-	Hostname       pulumi.StringInput
-	GenesisPVCName pulumi.StringInput
-	SeedNodes      pulumi.StringArrayInput
-	CertIssuerName pulumi.StringInput
-	Image          pulumi.StringInput
-	Plugins        pulumi.StringArrayInput
+	Name             pulumi.StringInput
+	Namespace        pulumi.StringInput
+	Hostname         pulumi.StringInput
+	GenesisPVCName   pulumi.StringInput
+	GenesisPublicURL pulumi.StringInput
+	SeedNodes        pulumi.StringArrayInput
+	CertIssuerName   pulumi.StringInput
+	Image            pulumi.StringInput
+	Plugins          pulumi.StringArrayInput
 }
 
 func NewSeedNodeWithSharedPVC(ctx *pulumi.Context, name string, args *SeedNodeWithSharedPVCArgs, opts ...pulumi.ResourceOption) (*SeedNodeWithSharedPVC, error) {
@@ -47,6 +48,10 @@ func NewSeedNodeWithSharedPVC(ctx *pulumi.Context, name string, args *SeedNodeWi
 
 	if args.Image == nil {
 		args.Image = pulumi.String("ghcr.io/actaboards/actaboards-core:latest")
+	}
+
+	if args.GenesisPVCName != nil && args.GenesisPublicURL != nil {
+		return nil, fmt.Errorf("seed node %s cannot use both GenesisPVCName and GenesisPublicURL", name)
 	}
 
 	Labels := pulumi.StringMap{
@@ -157,32 +162,58 @@ func NewSeedNodeWithSharedPVC(ctx *pulumi.Context, name string, args *SeedNodeWi
 					SecurityContext: &corev1.PodSecurityContextArgs{
 						FsGroup: pulumi.Int(1000),
 					},
-					InitContainers: corev1.ContainerArray{
-						&corev1.ContainerArgs{
-							Name:  pulumi.String("tls-combiner"),
-							Image: pulumi.String("busybox:latest"),
-							Command: pulumi.StringArray{
-								pulumi.String("sh"),
-								pulumi.String("-c"),
-								pulumi.String("cat /tls-certs/tls.crt /tls-certs/tls.key > /tls/combined.pem"),
-							},
-							SecurityContext: &corev1.SecurityContextArgs{
-								RunAsUser:  pulumi.Int(1000),
-								RunAsGroup: pulumi.Int(1000),
-							},
-							VolumeMounts: corev1.VolumeMountArray{
-								&corev1.VolumeMountArgs{
-									Name:      pulumi.String("tls-volume"),
-									MountPath: pulumi.String("/tls-certs"),
-									ReadOnly:  pulumi.Bool(true),
+					InitContainers: func() corev1.ContainerArray {
+						initContainers := corev1.ContainerArray{
+							&corev1.ContainerArgs{
+								Name:  pulumi.String("tls-combiner"),
+								Image: pulumi.String("busybox:latest"),
+								Command: pulumi.StringArray{
+									pulumi.String("sh"),
+									pulumi.String("-c"),
+									pulumi.String("cat /tls-certs/tls.crt /tls-certs/tls.key > /tls/combined.pem"),
 								},
-								&corev1.VolumeMountArgs{
-									Name:      pulumi.String("tls-writable-volume"),
-									MountPath: pulumi.String("/tls"),
+								SecurityContext: &corev1.SecurityContextArgs{
+									RunAsUser:  pulumi.Int(1000),
+									RunAsGroup: pulumi.Int(1000),
+								},
+								VolumeMounts: corev1.VolumeMountArray{
+									&corev1.VolumeMountArgs{
+										Name:      pulumi.String("tls-volume"),
+										MountPath: pulumi.String("/tls-certs"),
+										ReadOnly:  pulumi.Bool(true),
+									},
+									&corev1.VolumeMountArgs{
+										Name:      pulumi.String("tls-writable-volume"),
+										MountPath: pulumi.String("/tls"),
+									},
 								},
 							},
-						},
-					},
+						}
+
+						if args.GenesisPublicURL != nil {
+							initContainers = append(initContainers, &corev1.ContainerArgs{
+								Name:  pulumi.String("genesis-bootstrap"),
+								Image: pulumi.String("curlimages/curl:latest"),
+								Command: pulumi.StringArray{
+									pulumi.String("sh"),
+									pulumi.String("-ec"),
+									pulumi.Sprintf("curl --fail --silent --show-error --location %q -o /genesis/genesis.json && test -s /genesis/genesis.json", args.GenesisPublicURL),
+								},
+								SecurityContext: &corev1.SecurityContextArgs{
+									RunAsUser:  pulumi.Int(1000),
+									RunAsGroup: pulumi.Int(1000),
+								},
+								VolumeMounts: corev1.VolumeMountArray{
+									&corev1.VolumeMountArgs{
+										Name:      pulumi.String("genesis-volume"),
+										MountPath: pulumi.String("/genesis"),
+									},
+								},
+							})
+						}
+
+						return initContainers
+					}(),
 					Containers: corev1.ContainerArray{
 						&corev1.ContainerArgs{
 							Name:            pulumi.String(ns.Get("rpc")),
@@ -199,7 +230,7 @@ func NewSeedNodeWithSharedPVC(ctx *pulumi.Context, name string, args *SeedNodeWi
 									pulumi.String("--server-pem=/tls/combined.pem"),
 								}
 
-								if args.GenesisPVCName != nil {
+								if args.GenesisPVCName != nil || args.GenesisPublicURL != nil {
 									baseArgs = append(baseArgs, pulumi.String("--genesis-json=/genesis/genesis.json"))
 								}
 
@@ -250,7 +281,7 @@ func NewSeedNodeWithSharedPVC(ctx *pulumi.Context, name string, args *SeedNodeWi
 									},
 								}
 
-								if args.GenesisPVCName != nil {
+								if args.GenesisPVCName != nil || args.GenesisPublicURL != nil {
 									volumeMounts = append(volumeMounts, &corev1.VolumeMountArgs{
 										Name:      pulumi.String("genesis-volume"),
 										MountPath: pulumi.String("/genesis"),
@@ -288,6 +319,11 @@ func NewSeedNodeWithSharedPVC(ctx *pulumi.Context, name string, args *SeedNodeWi
 								PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSourceArgs{
 									ClaimName: args.GenesisPVCName,
 								},
+							})
+						} else if args.GenesisPublicURL != nil {
+							volumes = append(volumes, &corev1.VolumeArgs{
+								Name:     pulumi.String("genesis-volume"),
+								EmptyDir: &corev1.EmptyDirVolumeSourceArgs{},
 							})
 						}
 
