@@ -30,6 +30,7 @@ type SeedNodeWithSharedPVCArgs struct {
 	CertIssuerName   pulumi.StringInput
 	Image            pulumi.StringInput
 	Plugins          pulumi.StringArrayInput
+	ExposeRPC        *bool
 }
 
 func NewSeedNodeWithSharedPVC(ctx *pulumi.Context, name string, args *SeedNodeWithSharedPVCArgs, opts ...pulumi.ResourceOption) (*SeedNodeWithSharedPVC, error) {
@@ -48,6 +49,11 @@ func NewSeedNodeWithSharedPVC(ctx *pulumi.Context, name string, args *SeedNodeWi
 
 	if args.Image == nil {
 		args.Image = pulumi.String("ghcr.io/actaboards/actaboards-core:latest")
+	}
+
+	exposeRPC := true
+	if args.ExposeRPC != nil {
+		exposeRPC = *args.ExposeRPC
 	}
 
 	if args.GenesisPVCName != nil && args.GenesisPublicURL != nil {
@@ -119,22 +125,29 @@ func NewSeedNodeWithSharedPVC(ctx *pulumi.Context, name string, args *SeedNodeWi
 		},
 		Spec: &corev1.ServiceSpecArgs{
 			Type: pulumi.String("LoadBalancer"),
-			Ports: &corev1.ServicePortArray{
-				&corev1.ServicePortArgs{
-					Port:        pulumi.Int(8090),
-					TargetPort:  pulumi.Int(8090),
-					Name:        pulumi.String("rpc"),
-					Protocol:    pulumi.String("TCP"),
-					AppProtocol: pulumi.String("kubernetes.io/wss"),
-				},
-				&corev1.ServicePortArgs{
+			Ports: func() *corev1.ServicePortArray {
+				ports := corev1.ServicePortArray{}
+
+				if exposeRPC {
+					ports = append(ports, &corev1.ServicePortArgs{
+						Port:        pulumi.Int(8090),
+						TargetPort:  pulumi.Int(8090),
+						Name:        pulumi.String("rpc"),
+						Protocol:    pulumi.String("TCP"),
+						AppProtocol: pulumi.String("kubernetes.io/wss"),
+					})
+				}
+
+				ports = append(ports, &corev1.ServicePortArgs{
 					Port:        pulumi.Int(2771),
 					TargetPort:  pulumi.Int(2771),
 					Name:        pulumi.String("p2p"),
 					Protocol:    pulumi.String("TCP"),
 					AppProtocol: pulumi.String("kubernetes.io/wss"),
-				},
-			},
+				})
+
+				return &ports
+			}(),
 			Selector: Labels,
 		},
 	}, pulumi.Parent(component))
@@ -226,8 +239,11 @@ func NewSeedNodeWithSharedPVC(ctx *pulumi.Context, name string, args *SeedNodeWi
 								baseArgs := pulumi.StringArray{
 									pulumi.String("--data-dir=/data"),
 									pulumi.String("--p2p-endpoint=0.0.0.0:2771"),
-									pulumi.String("--rpc-tls-endpoint=0.0.0.0:8090"),
 									pulumi.String("--server-pem=/tls/combined.pem"),
+								}
+
+								if exposeRPC {
+									baseArgs = append(baseArgs, pulumi.String("--rpc-tls-endpoint=0.0.0.0:8090"))
 								}
 
 								if args.GenesisPVCName != nil || args.GenesisPublicURL != nil {
@@ -259,16 +275,23 @@ func NewSeedNodeWithSharedPVC(ctx *pulumi.Context, name string, args *SeedNodeWi
 
 								return baseArgs
 							}(),
-							Ports: corev1.ContainerPortArray{
-								&corev1.ContainerPortArgs{
-									Name:          pulumi.String("rpc"),
-									ContainerPort: pulumi.Int(8090),
-								},
-								&corev1.ContainerPortArgs{
+							Ports: func() corev1.ContainerPortArray {
+								ports := corev1.ContainerPortArray{}
+
+								if exposeRPC {
+									ports = append(ports, &corev1.ContainerPortArgs{
+										Name:          pulumi.String("rpc"),
+										ContainerPort: pulumi.Int(8090),
+									})
+								}
+
+								ports = append(ports, &corev1.ContainerPortArgs{
 									Name:          pulumi.String("p2p"),
 									ContainerPort: pulumi.Int(2771),
-								},
-							},
+								})
+
+								return ports
+							}(),
 							VolumeMounts: func() corev1.VolumeMountArray {
 								volumeMounts := corev1.VolumeMountArray{
 									&corev1.VolumeMountArgs{
