@@ -23,6 +23,8 @@ type SeedNodeWithSharedPVC struct {
 type SeedNodeWithSharedPVCArgs struct {
 	Name             pulumi.StringInput
 	Namespace        pulumi.StringInput
+	NodeSelector     pulumi.StringMapInput
+	Tolerations      corev1.TolerationArrayInput
 	Hostname         pulumi.StringInput
 	GenesisPVCName   pulumi.StringInput
 	GenesisPublicURL pulumi.StringInput
@@ -172,6 +174,8 @@ func NewSeedNodeWithSharedPVC(ctx *pulumi.Context, name string, args *SeedNodeWi
 					Labels: Labels,
 				},
 				Spec: &corev1.PodSpecArgs{
+					NodeSelector: args.NodeSelector,
+					Tolerations:  args.Tolerations,
 					SecurityContext: &corev1.PodSecurityContextArgs{
 						FsGroup: pulumi.Int(1000),
 					},

@@ -20,6 +20,8 @@ type WitnessNodeWithSharedPVC struct {
 type WitnessNodeWithSharedPVCArgs struct {
 	Name             pulumi.StringInput
 	Namespace        pulumi.StringInput
+	NodeSelector     pulumi.StringMapInput
+	Tolerations      corev1.TolerationArrayInput
 	GenesisPVCName   pulumi.StringInput
 	GenesisPublicURL pulumi.StringInput
 	SeedNodes        pulumi.StringArrayInput
