@@ -18,6 +18,8 @@ type IstiodArgs struct {
 	// Optional profile to use (for example: ambient, demo, preview, stable, remote).
 	// Leave empty to use the chart defaults.
 	Profile string
+	// Extra chart values merged over the profile selection.
+	Values pulumi.Map
 }
 
 func NewIstiod(ctx *pulumi.Context, name string, args *IstiodArgs, opts ...pulumi.ResourceOption) (*Istiod, error) {
@@ -52,10 +54,17 @@ func NewIstiod(ctx *pulumi.Context, name string, args *IstiodArgs, opts ...pulum
 		Version:         pulumi.String(version),
 	}
 
+	values := pulumi.Map{}
 	if profile != "" {
-		releaseArgs.Values = pulumi.Map{
-			"profile": pulumi.String(profile),
+		values["profile"] = pulumi.String(profile)
+	}
+	if args != nil {
+		for key, value := range args.Values {
+			values[key] = value
 		}
+	}
+	if len(values) > 0 {
+		releaseArgs.Values = values
 	}
 
 	release, err := helm.NewRelease(ctx, ns.Get(), releaseArgs, pulumi.Parent(component))
