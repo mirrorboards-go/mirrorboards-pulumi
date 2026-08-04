@@ -1,4 +1,12 @@
-package providers
+// Package azure builds the Azure provider, and is its own package for a reason
+// that is not organisational.
+//
+// Go compiles a package whole. With every cloud's provider in one package, a
+// program importing it to get Azure also compiles the AWS, GCP, Cloudflare and
+// DigitalOcean SDKs — measured at 9.2 GB of peak memory for a single module,
+// against the 7 GB a private repository's CI runner has. Splitting per cloud
+// means a platform pays for the clouds it uses.
+package azure
 
 import (
 	azurenative "github.com/pulumi/pulumi-azure-native-sdk/v3"
@@ -6,7 +14,7 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi/config"
 )
 
-type AzureProviderArgs struct {
+type ProviderArgs struct {
 	// SubscriptionId overrides the subscription from config. If nil, uses the
 	// azure-native:subscriptionId config.
 	SubscriptionId pulumi.StringInput
@@ -19,7 +27,7 @@ type AzureProviderArgs struct {
 	Location pulumi.StringInput
 }
 
-// NewAzureProvider creates an Azure provider that authenticates with the
+// NewProvider creates an Azure provider that authenticates with the
 // ambient identity: a federated OIDC token in CI, or the operator's `az login`
 // session locally.
 //
@@ -33,9 +41,9 @@ type AzureProviderArgs struct {
 // environment that GitHub Actions injects (ARM_USE_OIDC and friends), so
 // forcing it would break local runs, where the same code must work against an
 // interactive session.
-func NewAzureProvider(ctx *pulumi.Context, name string, args *AzureProviderArgs, opts ...pulumi.ResourceOption) (*azurenative.Provider, error) {
+func NewProvider(ctx *pulumi.Context, name string, args *ProviderArgs, opts ...pulumi.ResourceOption) (*azurenative.Provider, error) {
 	if args == nil {
-		args = &AzureProviderArgs{}
+		args = &ProviderArgs{}
 	}
 
 	cfg := config.New(ctx, "azure-native")
