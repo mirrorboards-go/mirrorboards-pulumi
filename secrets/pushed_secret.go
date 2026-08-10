@@ -17,8 +17,11 @@ type PushedEntry struct {
 type PushedSecret struct {
 	pulumi.ResourceState
 
-	Secret     *corev1.Secret
-	PushSecret *PushSecret
+	Secret *corev1.Secret
+	// PushSecret is the first store's PushSecret, kept for callers that
+	// publish to a single store; PushSecrets holds all of them.
+	PushSecret  *PushSecret
+	PushSecrets []*PushSecret
 }
 
 type PushedSecretArgs struct {
@@ -28,6 +31,13 @@ type PushedSecretArgs struct {
 	SecretName pulumi.StringInput
 	// StoreName of the ClusterSecretStore (default: infisical-secret-store).
 	StoreName string
+	// StoreNames publishes the SAME values to several stores — one Secret in
+	// the cluster, one PushSecret per destination. Used to keep a second
+	// Infisical environment (dev) in step with prod without a second owner
+	// of the value: the stack that owns a secret owns it everywhere.
+	//
+	// Takes precedence over StoreName when both are set.
+	StoreNames []string
 	// RefreshInterval of the PushSecret (default: 1h).
 	RefreshInterval string
 	// Entries is ordered — a stable order keeps pulumi previews diff-free.
@@ -70,19 +80,35 @@ func NewPushedSecret(ctx *pulumi.Context, name string, args *PushedSecretArgs, o
 		return nil, err
 	}
 
-	pushSecret, err := NewPushSecret(ctx, name+"-push", &PushSecretArgs{
-		Namespace:       args.Namespace,
-		SecretName:      secretName,
-		StoreName:       args.StoreName,
-		RefreshInterval: args.RefreshInterval,
-		Mappings:        mappings,
-	}, pulumi.Parent(component), pulumi.DependsOn([]pulumi.Resource{secret}))
-	if err != nil {
-		return nil, err
+	stores := args.StoreNames
+	if len(stores) == 0 {
+		stores = []string{args.StoreName}
+	}
+
+	for index, store := range stores {
+		// The first destination keeps the historical resource name, so adding
+		// a second store does not replace the PushSecret that already exists.
+		pushName := name + "-push"
+		if index > 0 {
+			pushName = name + "-push-" + store
+		}
+
+		pushSecret, err := NewPushSecret(ctx, pushName, &PushSecretArgs{
+			Namespace:       args.Namespace,
+			SecretName:      secretName,
+			StoreName:       store,
+			RefreshInterval: args.RefreshInterval,
+			Mappings:        mappings,
+		}, pulumi.Parent(component), pulumi.DependsOn([]pulumi.Resource{secret}))
+		if err != nil {
+			return nil, err
+		}
+
+		component.PushSecrets = append(component.PushSecrets, pushSecret)
 	}
 
 	component.Secret = secret
-	component.PushSecret = pushSecret
+	component.PushSecret = component.PushSecrets[0]
 
 	return component, nil
 }

@@ -108,3 +108,33 @@ func NewPushSecret(ctx *pulumi.Context, name string, args *PushSecretArgs, opts 
 
 	return component, nil
 }
+
+// NewPushSecrets publishes ONE existing Secret to several stores — one
+// PushSecret per destination, because a PushSecret carries exactly one store.
+//
+// Used to keep a second Infisical environment in step with prod without a
+// second owner of the value: the stack that owns a secret owns it everywhere.
+// Names after the first destination carry the store suffix, so adding a
+// destination never renames the resource that already exists.
+func NewPushSecrets(ctx *pulumi.Context, name string, stores []string, args *PushSecretArgs, opts ...pulumi.ResourceOption) ([]*PushSecret, error) {
+	pushed := make([]*PushSecret, 0, len(stores))
+
+	for index, store := range stores {
+		pushName := name
+		if index > 0 {
+			pushName = name + "-" + store
+		}
+
+		scoped := *args
+		scoped.StoreName = store
+
+		push, err := NewPushSecret(ctx, pushName, &scoped, opts...)
+		if err != nil {
+			return nil, err
+		}
+
+		pushed = append(pushed, push)
+	}
+
+	return pushed, nil
+}
