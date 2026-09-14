@@ -165,6 +165,8 @@ func NewSeedNodeWithSharedPVC(ctx *pulumi.Context, name string, args *SeedNodeWi
 			Namespace: args.Namespace,
 		},
 		Spec: &appsv1.DeploymentSpecArgs{
+			// A chain database on one PVC must never have two concurrent writers.
+			Strategy: &appsv1.DeploymentStrategyArgs{Type: pulumi.String("Recreate")},
 			Replicas: pulumi.Int(1),
 			Selector: &metav1.LabelSelectorArgs{
 				MatchLabels: Labels,
