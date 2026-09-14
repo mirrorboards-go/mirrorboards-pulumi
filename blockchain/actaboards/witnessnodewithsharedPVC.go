@@ -106,7 +106,13 @@ func NewWitnessNodeWithSharedPVC(ctx *pulumi.Context, name string, args *Witness
 		},
 		Spec: &appsv1.DeploymentSpecArgs{
 			// A chain database on one PVC must never have two concurrent writers.
-			Strategy: &appsv1.DeploymentStrategyArgs{Type: pulumi.String("Recreate")},
+			Strategy: &appsv1.DeploymentStrategyArgs{
+				Type: pulumi.String("RollingUpdate"),
+				RollingUpdate: &appsv1.RollingUpdateDeploymentArgs{
+					MaxSurge:       pulumi.Int(0),
+					MaxUnavailable: pulumi.Int(1),
+				},
+			},
 			Replicas: pulumi.Int(1),
 			Selector: &metav1.LabelSelectorArgs{
 				MatchLabels: Labels,
