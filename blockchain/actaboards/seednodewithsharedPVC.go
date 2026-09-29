@@ -1,6 +1,8 @@
 package actaboards
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -32,7 +34,9 @@ type SeedNodeWithSharedPVCArgs struct {
 	CertIssuerName   pulumi.StringInput
 	Image            pulumi.StringInput
 	Plugins          pulumi.StringArrayInput
-	ExposeRPC        *bool
+	// AllowedAPIs overrides the anonymous RPC API permissions when provided.
+	AllowedAPIs pulumi.StringArrayInput
+	ExposeRPC   *bool
 }
 
 func NewSeedNodeWithSharedPVC(ctx *pulumi.Context, name string, args *SeedNodeWithSharedPVCArgs, opts ...pulumi.ResourceOption) (*SeedNodeWithSharedPVC, error) {
@@ -159,6 +163,37 @@ func NewSeedNodeWithSharedPVC(ctx *pulumi.Context, name string, args *SeedNodeWi
 
 	component.Service = Service
 
+	var apiAccessConfig *corev1.ConfigMap
+	podAnnotations := pulumi.StringMap{}
+	if args.AllowedAPIs != nil {
+		apiAccessJSON := args.AllowedAPIs.ToStringArrayOutput().ApplyT(func(apis []string) (string, error) {
+			data, err := json.Marshal(map[string]interface{}{
+				"permission_map": [][]interface{}{{
+					"*", map[string]interface{}{
+						"password_hash_b64": "*",
+						"password_salt_b64": "*",
+						"allowed_apis":      apis,
+					},
+				}},
+			})
+			return string(data), err
+		}).(pulumi.StringOutput)
+		apiAccessConfig, err = corev1.NewConfigMap(ctx, ns.Get("api-access"), &corev1.ConfigMapArgs{
+			Metadata: &metav1.ObjectMetaArgs{
+				Name:      pulumi.String(ns.Get("api-access")),
+				Namespace: args.Namespace,
+			},
+			Data: pulumi.StringMap{"api-access.json": apiAccessJSON},
+		}, pulumi.Parent(component))
+		if err != nil {
+			return nil, err
+		}
+		// Permissions are read at startup, so changes must restart the node.
+		podAnnotations["checksum/api-access"] = apiAccessJSON.ApplyT(func(value string) string {
+			return fmt.Sprintf("%x", sha256.Sum256([]byte(value)))
+		}).(pulumi.StringOutput)
+	}
+
 	_, err = appsv1.NewDeployment(ctx, ns.Get("deployment"), &appsv1.DeploymentArgs{
 		Metadata: &metav1.ObjectMetaArgs{
 			Name:      pulumi.String(ns.Get("deployment")),
@@ -179,7 +214,8 @@ func NewSeedNodeWithSharedPVC(ctx *pulumi.Context, name string, args *SeedNodeWi
 			},
 			Template: &corev1.PodTemplateSpecArgs{
 				Metadata: &metav1.ObjectMetaArgs{
-					Labels: Labels,
+					Labels:      Labels,
+					Annotations: podAnnotations,
 				},
 				Spec: &corev1.PodSpecArgs{
 					NodeSelector: args.NodeSelector,
@@ -254,6 +290,10 @@ func NewSeedNodeWithSharedPVC(ctx *pulumi.Context, name string, args *SeedNodeWi
 									pulumi.String("--server-pem=/tls/combined.pem"),
 								}
 
+								if apiAccessConfig != nil {
+									baseArgs = append(baseArgs, pulumi.String("--api-access=/api-access/api-access.json"))
+								}
+
 								if exposeRPC {
 									baseArgs = append(baseArgs, pulumi.String("--rpc-tls-endpoint=0.0.0.0:8090"))
 								}
@@ -324,6 +364,13 @@ func NewSeedNodeWithSharedPVC(ctx *pulumi.Context, name string, args *SeedNodeWi
 									})
 								}
 
+								if apiAccessConfig != nil {
+									volumeMounts = append(volumeMounts, &corev1.VolumeMountArgs{
+										Name:      pulumi.String("api-access"),
+										MountPath: pulumi.String("/api-access"),
+										ReadOnly:  pulumi.Bool(true),
+									})
+								}
 								return volumeMounts
 							}(),
 						},
@@ -362,6 +409,14 @@ func NewSeedNodeWithSharedPVC(ctx *pulumi.Context, name string, args *SeedNodeWi
 							})
 						}
 
+						if apiAccessConfig != nil {
+							volumes = append(volumes, &corev1.VolumeArgs{
+								Name: pulumi.String("api-access"),
+								ConfigMap: &corev1.ConfigMapVolumeSourceArgs{
+									Name: apiAccessConfig.Metadata.Name().Elem(),
+								},
+							})
+						}
 						return volumes
 					}(),
 				},
