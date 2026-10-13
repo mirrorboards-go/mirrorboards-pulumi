@@ -18,6 +18,8 @@ type WitnessNodeWithSharedPVC struct {
 }
 
 type WitnessNodeWithSharedPVCArgs struct {
+	Replicas         pulumi.IntPtrInput
+	Resources        corev1.ResourceRequirementsPtrInput
 	Name             pulumi.StringInput
 	Namespace        pulumi.StringInput
 	NodeSelector     pulumi.StringMapInput
@@ -41,6 +43,10 @@ func NewWitnessNodeWithSharedPVC(ctx *pulumi.Context, name string, args *Witness
 
 	if args == nil {
 		args = &WitnessNodeWithSharedPVCArgs{}
+	}
+
+	if args.Replicas == nil {
+		args.Replicas = pulumi.Int(1)
 	}
 
 	if args.Image == nil {
@@ -80,6 +86,10 @@ func NewWitnessNodeWithSharedPVC(ctx *pulumi.Context, name string, args *Witness
 			Name:      args.Name,
 			Namespace: args.Namespace,
 			Labels:    Labels,
+			Annotations: pulumi.StringMap{
+				// Migration can intentionally leave the Deployment at zero replicas.
+				"pulumi.com/skipAwait": pulumi.String("true"),
+			},
 		},
 		Spec: &corev1.ServiceSpecArgs{
 			Type: pulumi.String("ClusterIP"),
@@ -113,7 +123,7 @@ func NewWitnessNodeWithSharedPVC(ctx *pulumi.Context, name string, args *Witness
 					MaxUnavailable: pulumi.Int(1),
 				},
 			},
-			Replicas: pulumi.Int(1),
+			Replicas: args.Replicas,
 			Selector: &metav1.LabelSelectorArgs{
 				MatchLabels: Labels,
 			},
@@ -156,6 +166,7 @@ func NewWitnessNodeWithSharedPVC(ctx *pulumi.Context, name string, args *Witness
 						&corev1.ContainerArgs{
 							Name:            pulumi.String(ns.Get("rpc")),
 							Image:           args.Image,
+							Resources:       args.Resources,
 							ImagePullPolicy: pulumi.String("Always"),
 							Command: pulumi.StringArray{
 								pulumi.String("/usr/local/bin/witness_node"),

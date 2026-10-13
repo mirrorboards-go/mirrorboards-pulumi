@@ -23,6 +23,8 @@ type SeedNodeWithSharedPVC struct {
 }
 
 type SeedNodeWithSharedPVCArgs struct {
+	Replicas         pulumi.IntPtrInput
+	Resources        corev1.ResourceRequirementsPtrInput
 	Name             pulumi.StringInput
 	Namespace        pulumi.StringInput
 	NodeSelector     pulumi.StringMapInput
@@ -37,6 +39,7 @@ type SeedNodeWithSharedPVCArgs struct {
 	// AllowedAPIs overrides the anonymous RPC API permissions when provided.
 	AllowedAPIs pulumi.StringArrayInput
 	ExposeRPC   *bool
+	ServiceType pulumi.StringInput
 }
 
 func NewSeedNodeWithSharedPVC(ctx *pulumi.Context, name string, args *SeedNodeWithSharedPVCArgs, opts ...pulumi.ResourceOption) (*SeedNodeWithSharedPVC, error) {
@@ -51,6 +54,10 @@ func NewSeedNodeWithSharedPVC(ctx *pulumi.Context, name string, args *SeedNodeWi
 
 	if args == nil {
 		args = &SeedNodeWithSharedPVCArgs{}
+	}
+
+	if args.Replicas == nil {
+		args.Replicas = pulumi.Int(1)
 	}
 
 	if args.Image == nil {
@@ -79,7 +86,8 @@ func NewSeedNodeWithSharedPVC(ctx *pulumi.Context, name string, args *SeedNodeWi
 			Name:      args.Name,
 			Namespace: args.Namespace,
 			Annotations: pulumi.StringMap{
-				"pulumi.com/waitFor": pulumi.String("condition=Ready"),
+				// The Deployment waits for the mounted TLS Secret; issuance can run concurrently.
+				"pulumi.com/skipAwait": pulumi.String("true"),
 			},
 		},
 		OtherFields: map[string]interface{}{
@@ -119,18 +127,25 @@ func NewSeedNodeWithSharedPVC(ctx *pulumi.Context, name string, args *SeedNodeWi
 		return nil, err
 	}
 
+	serviceType := args.ServiceType
+	if serviceType == nil {
+		serviceType = pulumi.String("LoadBalancer")
+	}
+
 	Service, err := corev1.NewService(ctx, ns.Get("svc"), &corev1.ServiceArgs{
 		Metadata: &metav1.ObjectMetaArgs{
 			Name:      args.Name,
 			Namespace: args.Namespace,
 			Labels:    Labels,
 			Annotations: pulumi.StringMap{
+				// Migration can intentionally leave the Deployment at zero replicas.
+				"pulumi.com/skipAwait":                      pulumi.String("true"),
 				"external-dns.alpha.kubernetes.io/hostname": args.Hostname,
 				"external-dns.alpha.kubernetes.io/ttl":      pulumi.String("1800"),
 			},
 		},
 		Spec: &corev1.ServiceSpecArgs{
-			Type: pulumi.String("LoadBalancer"),
+			Type: serviceType,
 			Ports: func() *corev1.ServicePortArray {
 				ports := corev1.ServicePortArray{}
 
@@ -208,7 +223,7 @@ func NewSeedNodeWithSharedPVC(ctx *pulumi.Context, name string, args *SeedNodeWi
 					MaxUnavailable: pulumi.Int(1),
 				},
 			},
-			Replicas: pulumi.Int(1),
+			Replicas: args.Replicas,
 			Selector: &metav1.LabelSelectorArgs{
 				MatchLabels: Labels,
 			},
@@ -279,6 +294,7 @@ func NewSeedNodeWithSharedPVC(ctx *pulumi.Context, name string, args *SeedNodeWi
 						&corev1.ContainerArgs{
 							Name:            pulumi.String(ns.Get("rpc")),
 							Image:           args.Image,
+							Resources:       args.Resources,
 							ImagePullPolicy: pulumi.String("Always"),
 							Command: pulumi.StringArray{
 								pulumi.String("/usr/local/bin/witness_node"),
